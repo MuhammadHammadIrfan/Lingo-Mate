@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import AudioBufferToWav from 'audiobuffer-to-wav';
 import Header from './components/header/header.component';
 import Sidebar from './components/sidebar/sidebar.component';
 import Footer from './components/footer/footer.component';
@@ -11,14 +12,6 @@ function App() {
   const [conversation, setConversation] = useState([]); // Track conversation
   const [topic, setTopic] = useState(''); // Selected topic from Sidebar
 
-  // Resizing window size if it is less that 768
-
-  // useEffect(() => {
-  //   // Check screen width on initial load
-  //   if (window.innerWidth <= 768) {
-  //     setIsSidebarOpen(false); // Close sidebar on mobile by default
-  //   }
-  // }, []); // Empty dependency array ensures this runs only once on mount
 
   const toggleSidebar = () => {
     setIsSidebarOpen(!isSidebarOpen);
@@ -28,13 +21,16 @@ function App() {
     setIsStarted(!isStarted);
 
     if (!isStarted) {
-      // Start recording
       console.log('Recording started...');
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: true,
         });
-        const mediaRecorder = new MediaRecorder(stream);
+        const audioContext = new AudioContext(); // Create an AudioContext for processing
+        const mediaRecorder = new MediaRecorder(stream, {
+          mimeType: 'audio/webm',
+        });
+
         const audioChunks = [];
 
         mediaRecorder.ondataavailable = (event) => {
@@ -45,76 +41,163 @@ function App() {
 
         mediaRecorder.onstop = async () => {
           console.log('Recording stopped, processing audio...');
-          const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
 
-          // Send audioBlob to the backend
-          const formData = new FormData();
-          formData.append('audio', audioBlob);
+          // Combine audio chunks into a Blob
+          const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
 
-          try {
-            const response = await fetch(
-              'http://localhost:5000/api/speech-to-text',
-              {
-                method: 'POST',
-                body: formData,
-              }
-            );
+          // Convert Blob to AudioBuffer
+          const arrayBuffer = await audioBlob.arrayBuffer();
+          const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
-            if (response.ok) {
-              const result = await response.json();
-              const userText = result.text;
+          // Convert AudioBuffer to WAV
+          const wavData = AudioBufferToWav(audioBuffer);
+          const wavBlob = new Blob([wavData], { type: 'audio/wav' });
 
-              // Add user input to the conversation
-              setConversation((prev) => [
-                ...prev,
-                { sender: 'user', text: userText },
-              ]);
+          // Convert WAV Blob to base64
+          const reader = new FileReader();
+          reader.onloadend = async () => {
+            const base64Audio = reader.result.split(',')[1]; // Get base64 part of the result
 
-              // Get AI response from backend
-              const chatResponse = await fetch(
-                'http://localhost:5000/api/chat',
+            // Send audio to speech-to-text API
+            try {
+              const sttResponse = await fetch(
+                'http://localhost:5000/api/speech/stt',
                 {
                   method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ text: userText }),
+                  headers: {
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({ audio: base64Audio }),
                 }
               );
 
-              if (chatResponse.ok) {
-                const chatResult = await chatResponse.json();
+              if (sttResponse.ok) {
+                const { text: userText } = await sttResponse.json();
+
+                // Add user input to the conversation
                 setConversation((prev) => [
                   ...prev,
-                  { sender: 'ai', text: chatResult.response },
+                  { sender: 'user', text: userText },
                 ]);
+
+                // Fetch AI response
+                try {
+                  const chatResponse = await fetch(
+                    'http://localhost:5000/api/chat',
+                    {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                      },
+                      body: JSON.stringify({
+                        userMessage: userText,
+                        conversation: conversation.map((msg) => ({
+                          role: msg.sender === 'user' ? 'user' : 'assistant',
+                          content: msg.text,
+                        })),
+                      }),
+                    }
+                  );
+
+                  if (chatResponse.ok) {
+                    const { aiResponse } = await chatResponse.json();
+
+                    // Add AI response to the conversation
+                    setConversation((prev) => [
+                      ...prev,
+                      { sender: 'ai', text: aiResponse },
+                    ]);
+
+                    // Play AI response via TTS
+                    playAudio(aiResponse);
+                  } else {
+                    console.error(
+                      'Error fetching AI response:',
+                      chatResponse.statusText
+                    );
+                  }
+                } catch (error) {
+                  console.error('Error with chat API:', error.message);
+                }
               } else {
-                console.error('Failed to fetch AI response');
+                console.error(
+                  'Error in speech-to-text response:',
+                  sttResponse.statusText
+                );
               }
-            } else {
-              console.error('Failed to process audio');
+            } catch (error) {
+              console.error('Error sending audio to the server:', error.message);
             }
-          } catch (error) {
-            console.error('Error communicating with backend:', error);
-          }
+          };
+
+          reader.readAsDataURL(wavBlob);
         };
 
+        // Start the recording
         mediaRecorder.start();
 
-        // Stop the recording after a certain time or user interaction
-        setTimeout(() => mediaRecorder.stop(), 5000); // Example: stop after 5 seconds
+        // Save the recorder so it can be stopped manually
+        window.mediaRecorder = mediaRecorder; // Save for manual control
       } catch (error) {
         console.error('Error accessing microphone:', error);
       }
     } else {
       console.log('Recording stopped manually.');
-      // Logic to stop recording if needed (e.g., with a global reference to mediaRecorder)
+      if (window.mediaRecorder) {
+        window.mediaRecorder.stop(); // Stop the recording when the stop button is pressed
+        window.mediaRecorder = null;
+      }
+    }
+  };
+
+
+
+  const playAudio = async (text) => {
+    try {
+      const response = await fetch('http://localhost:5000/api/speech/tts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ text }),
+      });
+
+      if (response.ok) {
+        const { audio } = await response.json();
+        const audioBlob = new Blob(
+          [
+            new Uint8Array(
+              atob(audio)
+                .split('')
+                .map((char) => char.charCodeAt(0))
+            ),
+          ],
+          {
+            type: 'audio/wav',
+          }
+        );
+        const audioUrl = URL.createObjectURL(audioBlob);
+        const audioPlayer = new Audio(audioUrl);
+        audioPlayer.play();
+      } else {
+        console.error(
+          'Error in text-to-speech response:',
+          response.statusText
+        );
+      }
+    } catch (error) {
+      console.error('Error with TTS API:', error.message);
     }
   };
 
   const handleTopicSelect = (selectedTopic) => {
+    const aiMessage = `Okay so you selected ${selectedTopic} for conversation, lets talk about it.`;
     setTopic(selectedTopic);
     setConversation([
-      { sender: 'ai', text: `Let's talk about ${selectedTopic}.` },
+      { sender: 'ai', text: aiMessage },
     ]);
+
+    playAudio(aiMessage);
   };
 
   return (

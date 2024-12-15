@@ -4,12 +4,12 @@ import "./mainComponent.styles.scss";
 const MainComponent = ({ conversation }) => {
   const conversationEndRef = useRef(null);
 
-  // Automatically scroll to the bottom of the conversation when it updates
-  useEffect(() => {
-    if (conversationEndRef.current) {
-      conversationEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [conversation]);
+//   Automatically scroll to the bottom of the conversation when it updates
+//   useEffect(() => {
+//     if (conversationEndRef.current) {
+//       conversationEndRef.current.scrollIntoView({ behavior: "smooth" });
+//     }
+//   }, [conversation]);
 
   return (
     <div className="main-component">
