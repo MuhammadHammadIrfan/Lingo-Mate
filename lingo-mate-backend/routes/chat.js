@@ -70,7 +70,8 @@ router.post('/', async (req, res) => {
     const systemMessage = {
       role: 'system',
       content:
-        'Please keep your responses short and conversational, and feel free to ask questions when appropriate, just like a friendly chat.',
+      // 'Always keep your responce concise and conversational, behave like a client I got from a freelancing platform and going to do your project on selected topic. Even though you are not a human, behave like you are a human talking to a freelancer who is going to do your project and you are taking his interview to decide whether you are going to assign him your project or he is not good enough. Also after some conversation when you can decide whether am I compatable for your project or not, you have to tell me that whether you are going to hire me or your are going to reject me.',
+        'Always keep you responce short and conversational, behave like a friendly chat. Do not generate respose like an LLM. Conversate with me just like two frinends do with each other. Tell about your things and ask about me also about that specific topic. You ofcourse as an LLM do not have experience or feeling like a human but behave like you are a human talking to his friend.',
     };
 
     // Combine system message, conversation history, and user message into the prompt
